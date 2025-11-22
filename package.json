@@ -87,6 +87,35 @@
           "default": 200,
           "minimum": 1,
           "description": "Delay in milliseconds between each step execution during run"
+        },
+        "riscv-debug-support.Execution.processorType": {
+          "type": "string",
+          "default": "single_stage",
+          "enum": [
+            "single_stage",
+            "multi_stage"
+          ],
+          "description": "Select the processor architecture mode.\n'single_stage' is the baseline; 'multi_stage' enables pipeline features."
+        },
+        "riscv-debug-support.Execution.hazardDetection": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Enable pipeline hazard detection (stalls). \n\n**Note:** Only applies when `Processor Type` is set to `multi_stage`."
+        },
+        "riscv-debug-support.Execution.forwarding": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Enable data forwarding to resolve hazards without stalling. \n\n**Note:** Only applies when `Processor Type` is set to `multi_stage`."
+        },
+        "riscv-debug-support.Execution.branchPrediction": {
+          "type": "string",
+          "default": "none",
+          "enum": [
+            "none",
+            "static",
+            "dynamic_1bit"
+          ],
+          "markdownDescription": "Select the branch prediction strategy. \n\n**Note:** Only applies when `Processor Type` is set to `multi_stage`."
         }
       }
     },

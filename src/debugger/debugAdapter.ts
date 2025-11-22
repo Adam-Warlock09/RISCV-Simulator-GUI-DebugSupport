@@ -41,6 +41,7 @@ interface VmHandler {
   vmModifyRegister(register: string, value: string): Boolean;
   readStateJson(): { program_counter?: string; current_line?: number; disassembly_line_number?: number, current_instruction?: string; instructions_retired?: number; output_status?: string; breakpoints?: number[] };
   readRegistersJson(): { gp_registers?: any; fp_registers?: any; "control and status registers"?: any };
+  readPipelineRegistersJson(): { IF_ID?: any; ID_EX?: any; EX_MEM?: any; MEM_WB?: any };
   readErrorsJson(): { errorCode?: number; errors?: { line: number; message: string }[] };
   readMemoryJson(): Record<string, string>;
   readDisassembly(): string;
@@ -154,7 +155,7 @@ export class RiscvDebugSession extends DebugSession {
         // }
 
 
-        if (!triedLoading && !outputBuffer.includes('VM_PROGRAM_LOADED')) {
+        if (!triedLoading && this._vmHandler?.isRunning() && !outputBuffer.includes('VM_PROGRAM_LOADED')) {
           this._vmHandler?.vmLoad(this._sourceFile);
           triedLoading = true;
         }
@@ -542,7 +543,9 @@ export class RiscvDebugSession extends DebugSession {
     response.body = {
       scopes: [
         new Scope("Registers", this._variableHandles.create("registers"), false),
-        new Scope("VM State", this._variableHandles.create("vmstate"), false)
+        // Add a new scope request for pipeline registers
+        new Scope("Pipeline Registers", this._variableHandles.create("pipeline_registers"), false),
+        new Scope("VM State", this._variableHandles.create("vmstate"), false),
       ]
     };
     this.sendResponse(response);
@@ -590,9 +593,63 @@ export class RiscvDebugSession extends DebugSession {
           }
         );
 
-      } 
+      }else if( id === 'pipeline_registers'){
+
+        variables.push(
+          {
+            name: 'IF/ID',
+            type: 'group',
+            value: '',
+            variablesReference: this._variableHandles.create('if_id_register')
+          },
+          {
+            name: 'ID/EX',
+            type: 'group',
+            value: '',
+            variablesReference: this._variableHandles.create('id_ex_register')
+          },
+          {
+            name: 'EX/MEM',
+            type: 'group',
+            value: '',
+            variablesReference: this._variableHandles.create('ex_mem_register')
+          },
+          {
+            name: 'MEM/WB',
+            type: 'group',
+            value: '',
+            variablesReference: this._variableHandles.create('mem_wb_register')
+          }
+        );
+
+      } else if(id === 'if_id_register' || id === 'id_ex_register' || id === 'ex_mem_register' || id === 'mem_wb_register'){
       
-      else if (id === 'gp_registers' || id === 'fp_registers' || id === 'csr_registers') {
+        const fullState = this._vmHandler.readPipelineRegistersJson();
+
+        const keyMap: Record<string, string> = {
+          'if_id_register': 'IF_ID',
+          'id_ex_register': 'ID_EX',
+          'ex_mem_register': 'EX_MEM',
+          'mem_wb_register': 'MEM_WB'
+        };
+
+        const jsonKey = keyMap[id];
+        const data = fullState ? (fullState as any)[jsonKey] : null;
+
+        if (data) {
+
+          for (const [reg, value] of Object.entries(data)) {
+            variables.push({
+              name: reg,
+              type: 'string',
+              value: String(value),
+              variablesReference: 0
+            });
+          }
+
+        }
+
+      } else if (id === 'gp_registers' || id === 'fp_registers' || id === 'csr_registers') {
         const state = this._vmHandler.readRegistersJson();
 
 

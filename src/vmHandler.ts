@@ -36,6 +36,20 @@ class vmHandler {
     return JSON.parse(content);
   }
 
+  readPipelineRegistersJson() {
+    const vmPipelineRegistersDump = path.join(vmStateDir, 'pipeline_registers_dump.json');
+    try {
+      if (fs.existsSync(vmPipelineRegistersDump)) {
+        const content = fs.readFileSync(vmPipelineRegistersDump, 'utf8');
+        return JSON.parse(content);
+      }
+    } catch (err) {
+      console.error('Error reading pipeline registers dump:', err);
+    }
+
+    return null;
+  }
+
   readErrorsJson() {
     const vmErrorsDump = path.join(vmStateDir, 'errors_dump.json');
     const content = fs.readFileSync(vmErrorsDump, 'utf8');
@@ -132,11 +146,30 @@ class vmHandler {
 
         if (output.includes('VM_STARTED')) {
           this.isVmRunning = true;
-          const run_step_delay = vscode.workspace.getConfiguration('riscv-debug-support').get('Execution.runStepDelay');
-          this.sendInput(`modify_config Execution run_step_delay ${run_step_delay}`);
 
-          const data_section_start = vscode.workspace.getConfiguration('riscv-debug-support').get('Memory.dataSectionStart');
+          // Load configuration settings from VSCode settings
+          const config = vscode.workspace.getConfiguration('riscv-debug-support');
+          
+          // Old settings
+          const run_step_delay = config.get('Execution.runStepDelay');
+          const data_section_start = config.get('Memory.dataSectionStart');
+
+          // New settings
+          const processor_type = config.get('Execution.processorType');
+          const hazard_detection = config.get('Execution.hazardDetection');
+          const branch_prediction = config.get('Execution.branchPrediction');
+          const forwarding = config.get('Execution.forwarding');
+
+          // Apply old configuration settings to C++ VM
+          this.sendInput(`modify_config Execution run_step_delay ${run_step_delay}`);
           this.sendInput(`modify_config Memory data_section_start ${data_section_start}`);
+
+          // Apply new configuration settings to C++ VM
+          this.sendInput(`modify_config Execution processor_type ${processor_type}`);
+          this.sendInput(`modify_config Execution hazard_detection ${hazard_detection}`);
+          this.sendInput(`modify_config Execution branch_prediction ${branch_prediction}`);
+          this.sendInput(`modify_config Execution forwarding ${forwarding}`);
+
           resolve();
         }
       });
