@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import vmHandler from './vmHandler';
-import { createProgramCounterLabel, getProgramCounterLabel, createInstructionsExecutedLabel, getInstructionsExecutedLabel } from './debugger/statusBar';
+import { getProgramCounterLabel, getInstructionsExecutedLabel, getPerformanceLabel, setupStatusBarItems } from './debugger/statusBar';
 import { RiscvDebugSession } from './debugger/debugAdapter';
 import { lintDocument, validateISA, diagnosticCollection } from './riscvLinter';
 import { signatureProvider } from './riscvSignature';
@@ -11,6 +11,9 @@ import { completionProvider } from './riscvCompletion';
 import { DisassemblyDocument } from './debugger/disassemblyDoc';
 export let disassemblyDoc: DisassemblyDocument;   // exported handle
 
+import { loadDecorations } from './debugger/decorations';
+import { RiscvHoverProvider } from './riscHover';
+
 
 
 const vmHandlerInstance = new vmHandler(vmBinaryPath, ['--vm-as-backend', '--start-vm']);
@@ -19,8 +22,11 @@ const vmHandlerInstance = new vmHandler(vmBinaryPath, ['--vm-as-backend', '--sta
 export function activate(context: vscode.ExtensionContext) {
   console.log('Congratulations, your extension "riscv-debug-support" is now active!');
 
+  loadDecorations(context);
+
   disassemblyDoc = new DisassemblyDocument(context);
 
+  setupStatusBarItems();
 
   function yourFunction(newValue: any) {
     console.log('New setting value:', newValue);
@@ -45,17 +51,19 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(disposable);
 
+  if (getProgramCounterLabel()) {
+      context.subscriptions.push(getProgramCounterLabel()!);
+  }
+  if (getInstructionsExecutedLabel()) {
+      context.subscriptions.push(getInstructionsExecutedLabel()!);
+  }
+  if (getPerformanceLabel()) {
+      context.subscriptions.push(getPerformanceLabel()!);
+  }
 
-
-
-  createProgramCounterLabel();
-  context.subscriptions.push(getProgramCounterLabel()!);
-
-  createInstructionsExecutedLabel();
-  context.subscriptions.push(getInstructionsExecutedLabel()!);
-
-
-
+  context.subscriptions.push(
+    vscode.languages.registerHoverProvider('riscv', new RiscvHoverProvider(vmHandlerInstance))
+  )
 
   context.subscriptions.push(
     vscode.debug.registerDebugAdapterDescriptorFactory('riscvSimpleDebug', new InlineDebugAdapterFactory())
@@ -130,7 +138,26 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Pipeline View Command :
+  context.subscriptions.push(vscode.commands.registerCommand("riscv-debug-support.showPipeline", async () => {
+    
+    const session = vscode.debug.activeDebugSession;
+    if (session && session.type === 'riscvSimpleDebug') {
+      await session.customRequest("showPipeline");
+    } else {
+      vscode.window.showErrorMessage("No active RISC-V debug session found.");
+    }
 
+  }));
+
+  context.subscriptions.push(vscode.commands.registerCommand('riscv-debug-support.showGantt', async () => {
+    const session = vscode.debug.activeDebugSession;
+    if (session && session.type === 'riscvSimpleDebug') {
+      await session.customRequest('showGantt');
+    } else {
+      vscode.window.showErrorMessage("No active RISC-V debug session found.");
+    }
+  }));
 
   // Code completion provider for RISC-V assembly language
   context.subscriptions.push(completionProvider);

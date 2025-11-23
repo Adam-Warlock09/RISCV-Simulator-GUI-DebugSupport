@@ -1,29 +1,47 @@
 import * as vscode from 'vscode';
 
+let PCLabel: vscode.StatusBarItem | undefined;
+let instructionsLabel: vscode.StatusBarItem | undefined;
+let performanceLabel: vscode.StatusBarItem | undefined;
 
-let programCounterLabel: vscode.StatusBarItem;
+export function setupStatusBarItems(): void {
 
-export function createProgramCounterLabel(): void {
-  programCounterLabel = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-  programCounterLabel.text = 'PC: 0x00000000';
-  programCounterLabel.tooltip = 'Current Program Counter';
-  programCounterLabel.hide();
+  // PC Label
+  PCLabel = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  PCLabel.tooltip = 'Program Counter';
+  PCLabel.text = 'PC: 0';
+
+  // Instructions Label
+  instructionsLabel = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+  instructionsLabel.tooltip = 'Total Instructions Retired';
+  instructionsLabel.text = 'Instr: 0';
+
+  // Performance Label
+  performanceLabel = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 98);
+  performanceLabel.tooltip = 'Pipeline Performance Metrics';
+  performanceLabel.text = "$(dashboard) Cycles: 0 | Stalls: 0 | CPI: N/A";
+  performanceLabel.command = "riscv-debug-support.showPipeline";
+
+  PCLabel.show();
+  instructionsLabel.show();
+  performanceLabel.show();
+
 }
 
-export function getProgramCounterLabel(): vscode.StatusBarItem | undefined {
-  return programCounterLabel;
+export function getProgramCounterLabel(){
+  return PCLabel;
 }
 
-
-let instructionsExecutedLabel: vscode.StatusBarItem;
-
-export function createInstructionsExecutedLabel(): void {
-  instructionsExecutedLabel = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, -1);
-  instructionsExecutedLabel.text = 'Instructions: 0';
-  instructionsExecutedLabel.tooltip = 'Total Instructions Executed';
-  instructionsExecutedLabel.hide();
+export function getInstructionsExecutedLabel(){
+  return instructionsLabel;
 }
 
-export function getInstructionsExecutedLabel(): vscode.StatusBarItem | undefined {
-  return instructionsExecutedLabel;
+export function getPerformanceLabel(){
+  return performanceLabel;
+}
+
+export function disposeStatusBarItems(): void {
+  PCLabel?.dispose();
+  instructionsLabel?.dispose();
+  performanceLabel?.dispose();
 }

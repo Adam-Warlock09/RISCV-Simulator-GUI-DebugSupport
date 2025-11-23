@@ -29,6 +29,32 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "menus": {
+      "editor/title": [
+        {
+          "command": "riscv-debug-support.showPipeline",
+          "group": "navigation",
+          "when": "riscvDebugRunning"
+        },
+        {
+          "command": "riscv-debug-support.showGantt",
+          "group": "navigation",
+          "when": "riscvDebugRunning"
+        }
+      ],
+      "debug/toolBar": [
+        {
+          "command": "riscv-debug-support.showPipeline",
+          "group": "navigation",
+          "when": "riscvDebugRunning"
+        },
+        {
+          "command": "riscv-debug-support.showGantt",
+          "group": "navigation",
+          "when": "riscvDebugRunning"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "riscv-debug-support.showVmMemory",
@@ -37,6 +63,18 @@
       {
         "command": "riscv-debug-support.riscvSimpleDebug.getProgramName",
         "title": "Riscv Support: Get Program Name"
+      },
+      {
+        "command": "riscv-debug-support.showPipeline",
+        "title": "RISC-V: Show Pipeline Diagram",
+        "category": "RISC-V",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "riscv-debug-support.showGantt",
+        "title": "RISC-V: Show Gantt Chart",
+        "category": "RISC-V",
+        "icon": "$(list-tree)"
       }
     ],
     "viewsContainers": {},

@@ -10,12 +10,16 @@ import { basename } from 'path';
 import * as vscode from 'vscode';
 
 import { diagnosticCollection } from '../riscvLinter';
-import { getProgramCounterLabel, getInstructionsExecutedLabel } from './statusBar';
+import { getProgramCounterLabel, getInstructionsExecutedLabel, getPerformanceLabel } from './statusBar';
 import { showMemoryDumpAsWebview } from '../views/showMemory';
 import { terminalManager } from './terminalManager';
 import { disassemblyDoc } from '../extension';
+import { updatePipelineDecorations, clearPipelineDecorations } from './decorations';
 
 import { mapRegisterName } from '../utils';
+import { showPipelineAsWebview, updatePipelineIfActive, closePipelineView } from '../views/showPipeline';
+import { ganttTracker } from './ganttTracker';
+import { showGanttAsWebview, updateGanttIfActive, closeGanttView } from '../views/showGantt';
 
 interface LaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
   program: string;
@@ -39,7 +43,7 @@ interface VmHandler {
   vmDumpMemory(ranges: string): void;
   vmGetMemoryData(address: string): Promise<string>;
   vmModifyRegister(register: string, value: string): Boolean;
-  readStateJson(): { program_counter?: string; current_line?: number; disassembly_line_number?: number, current_instruction?: string; instructions_retired?: number; output_status?: string; breakpoints?: number[] };
+  readStateJson(): { program_counter?: string; current_line?: number; disassembly_line_number?: number; current_instruction?: string; instructions_retired?: number; output_status?: string; breakpoints?: number[]; cycle_count?: number; stall_cycles?: number; };
   readRegistersJson(): { gp_registers?: any; fp_registers?: any; "control and status registers"?: any };
   readPipelineRegistersJson(): { IF_ID?: any; ID_EX?: any; EX_MEM?: any; MEM_WB?: any };
   readErrorsJson(): { errorCode?: number; errors?: { line: number; message: string }[] };
@@ -82,7 +86,7 @@ export class RiscvDebugSession extends DebugSession {
   protected initializeRequest(response: DebugProtocol.InitializeResponse, args: DebugProtocol.InitializeRequestArguments): void {
     response.body = response.body || {};
     response.body.supportsConfigurationDoneRequest = true;
-    response.body.supportsEvaluateForHovers = true;
+    response.body.supportsEvaluateForHovers = false;
     response.body.supportsStepBack = true;
     response.body.supportsBreakpointLocationsRequest = true;
     // response.body.supportsConditionalBreakpoints = true;
@@ -174,14 +178,12 @@ export class RiscvDebugSession extends DebugSession {
           // if (state.disassembly_line_number) {
           //   this._disassemblyLine = state.disassembly_line_number;
           // }
-          this.updateCurrentLine();
+          this.updateEditorState(state);
 
           disassemblyDoc.open(this._vmHandler?.readDisassembly() || '', vscode.ViewColumn.Beside);
           // disassemblyDoc.highlight(this._disassemblyLine);
 
           this.sendEvent(new OutputEvent(`Starting RISC-V debugger for: ${this._sourceFile}\n`));
-          getProgramCounterLabel()!.text = `PC: ${state.program_counter ?? 0}`;
-          getInstructionsExecutedLabel()!.text = `Instructions: ${state.instructions_retired ?? 0}`;
           this.restoreBreakpoints();
           this.sendEvent(new InitializedEvent());
           const reason = args.stopOnEntry ? 'entry' : 'breakpoint';
@@ -198,23 +200,6 @@ export class RiscvDebugSession extends DebugSession {
       response.success = false;
       response.message = `Cannot launch program: ${error}`;
       this.sendResponse(response);
-    }
-  }
-
-  private updateCurrentLine(): void {
-    if (this._vmHandler && this._vmHandler.isRunning()) {
-      try {
-        const state = this._vmHandler ? this._vmHandler.readStateJson() : {};
-        if (state.current_line) {
-          this._currentLine = state.current_line;
-        }
-        if (state.disassembly_line_number) {
-          this._disassemblyLine = state.disassembly_line_number;
-        }
-        disassemblyDoc.highlight(this._disassemblyLine);
-      } catch (error) {
-        this.sendEvent(new OutputEvent(`Error reading VM state: ${error}\n`));
-      }
     }
   }
 
@@ -490,12 +475,11 @@ export class RiscvDebugSession extends DebugSession {
   }
 
   protected stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): void {
-    this.updateCurrentLine();
 
     const mainFrame = new StackFrame(
       0,
       `Line ${this._currentLine}`,
-      this.createSource(this._sourceFile),
+      this._currentLine > 0 ? this.createSource(this._sourceFile) : undefined,
       this._currentLine,
       1
     );
@@ -826,9 +810,7 @@ export class RiscvDebugSession extends DebugSession {
           this.sendEvent(new OutputEvent('[VM] Waiting for input\n'));
           outputBuffer = outputBuffer.replace('VM_STDIN_START', '');
           const state = this._vmHandler?.readStateJson();
-          getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
-          getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
-          this.updateCurrentLine();
+          this.updateEditorState(state);
           this.sendEvent(new StoppedEvent('pause', RiscvDebugSession.THREAD_ID));
 
           terminalManager.read().then((line: string) => {
@@ -850,9 +832,7 @@ export class RiscvDebugSession extends DebugSession {
 
         if (outputBuffer.includes('VM_STEP_COMPLETED')) {
           const state = this._vmHandler?.readStateJson();
-          getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
-          getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
-          this.updateCurrentLine();
+          this.updateEditorState(state);
           this.sendEvent(new StoppedEvent('pause', RiscvDebugSession.THREAD_ID));
         }
 
@@ -860,27 +840,30 @@ export class RiscvDebugSession extends DebugSession {
           const state = this._vmHandler?.readStateJson();
           this._currentLine = 0;
           this._disassemblyLine = 0;
-          getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
-          getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
+          this.updateEditorState(state);
           this.sendEvent(new StoppedEvent('step', RiscvDebugSession.THREAD_ID));
         }
 
         if (outputBuffer.includes('VM_BREAKPOINT_HIT')) {
           this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
           const state = this._vmHandler?.readStateJson();
-          this.updateCurrentLine();
-          getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
-          getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
-          this.sendEvent(new StoppedEvent('breakpoint', RiscvDebugSession.THREAD_ID));
+          this.updateEditorState(state);
+          this.sendEvent(new StoppedEvent('pause', RiscvDebugSession.THREAD_ID));
           this.sendResponse(response);
+          vscode.window.showInformationMessage("Program has reached the end of execution.");
           this.isRunningContinue = false;
+          console.log('VM hit Program End');
           return;
         }
 
         if (outputBuffer.includes('VM_PROGRAM_END')) {
           this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
-          this._vmHandler?.vmExit();
-          this.sendEvent(new TerminatedEvent());
+          const state = this._vmHandler?.readStateJson();
+          this.updateEditorState(state);
+          
+          this.sendEvent(new StoppedEvent('pause', RiscvDebugSession.THREAD_ID));
+          vscode.window.showInformationMessage("Program has reached the end of execution.");
+          
           this.sendResponse(response);
           this.isRunningContinue = false;
           return;
@@ -888,12 +871,8 @@ export class RiscvDebugSession extends DebugSession {
 
         if (outputBuffer.includes('VM_STOPPED')) {
           this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
-          // const state = this._vmHandler?.readStateJson();
-          // if (state?.current_line) {
-          //   this._currentLine = state?.current_line;
-          // }
-          // getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
-          // getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
+          const state = this._vmHandler?.readStateJson();
+          this.updateEditorState(state);
           this.sendEvent(new StoppedEvent('pause', RiscvDebugSession.THREAD_ID));
           this.sendResponse(response);
           this.isRunningContinue = false;
@@ -914,14 +893,7 @@ export class RiscvDebugSession extends DebugSession {
       if (output.includes('VM_STOPPED')) {
         this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
         const state = this._vmHandler?.readStateJson();
-        getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
-        getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
-        if (state?.current_line) {
-          this._currentLine = state.current_line;
-        }
-        if (state?.disassembly_line_number) {
-          this._disassemblyLine = state.disassembly_line_number;
-        }
+        this.updateEditorState(state);
         this.sendEvent(new StoppedEvent('pause', RiscvDebugSession.THREAD_ID));
         this.sendResponse(response);
         this.isRunningContinue = false;
@@ -980,28 +952,27 @@ export class RiscvDebugSession extends DebugSession {
       if (outputBuffer.includes('VM_STEP_COMPLETED')) {
         this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
         const state = this._vmHandler?.readStateJson();
-        getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
-        getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
+        this.updateEditorState(state);
         this.sendEvent(new StoppedEvent('step', RiscvDebugSession.THREAD_ID));
-        this.updateCurrentLine();
         return this.sendResponse(response);
       }
 
       if (outputBuffer.includes('VM_LAST_INSTRUCTION_STEPPED')) {
         this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
         const state = this._vmHandler?.readStateJson();
-        this._currentLine = 0;
-        this._disassemblyLine = 0;
-        getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
-        getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
+        this.updateEditorState(state);
         this.sendEvent(new StoppedEvent('step', RiscvDebugSession.THREAD_ID));
         return this.sendResponse(response);
       }
 
       if (outputBuffer.includes('VM_PROGRAM_END')) {
         this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
-        this._vmHandler?.vmExit();
-        this.sendEvent(new TerminatedEvent());
+        const state = this._vmHandler?.readStateJson();
+        this.updateEditorState(state);
+        
+        this.sendEvent(new StoppedEvent('step', RiscvDebugSession.THREAD_ID));
+        vscode.window.showInformationMessage("Program has reached the end of execution.");
+
         return this.sendResponse(response);
       }
 
@@ -1020,15 +991,30 @@ export class RiscvDebugSession extends DebugSession {
   }
 
   protected stepBackRequest(response: DebugProtocol.StepBackResponse, args: DebugProtocol.StepBackArguments): void {
-    if (this._vmHandler && this._vmHandler.isRunning() && !this.isRunningContinue) {
-      this._vmHandler.vmUndo();
-      const state = this._vmHandler.readStateJson();
-      this.updateCurrentLine();
-      getProgramCounterLabel()!.text = `PC: ${state.program_counter ?? 0}`;
-      getInstructionsExecutedLabel()!.text = `Instructions: ${state.instructions_retired ?? 0}`;
-      this.sendEvent(new StoppedEvent('step', RiscvDebugSession.THREAD_ID));
+    
+    if (!this._vmHandler || !this._vmHandler.isRunning() || this.isRunningContinue) {
+      return this.sendResponse(response);
     }
-    this.sendResponse(response);
+
+    this._vmHandler.vmUndo();
+
+    let outputBuffer = '';
+    const onData = (data: Buffer) => {
+      outputBuffer += data.toString();
+
+      if (outputBuffer.includes('VM_UNDO_COMPLETED')) {
+        this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
+
+        const state = this._vmHandler?.readStateJson();
+        this.updateEditorState(state);
+
+        this.sendEvent(new StoppedEvent('step', RiscvDebugSession.THREAD_ID));
+        return this.sendResponse(response);
+      }
+    };
+
+    this._vmHandler.childProcess?.stdout?.on('data', onData);
+
   }
 
   protected restartRequest(response: DebugProtocol.RestartResponse, args: DebugProtocol.RestartArguments): void {
@@ -1085,13 +1071,11 @@ export class RiscvDebugSession extends DebugSession {
             );
             this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
             const state = this._vmHandler ? this._vmHandler.readStateJson() : {};
-            if (state.current_line) {
-              this._currentLine = state.current_line;
-            }
             disassemblyDoc.update(this._vmHandler?.readDisassembly() || '');
             // disassemblyDoc.highlight(this._disassemblyLine);
-            getProgramCounterLabel()!.text = `PC: ${state.program_counter ?? 0}`;
-            getInstructionsExecutedLabel()!.text = `Instructions: ${state.instructions_retired ?? 0}`;
+            ganttTracker.reset();
+            clearPipelineDecorations();
+            this.updateEditorState(state);
             this.restoreBreakpoints();
             this.sendEvent(new OutputEvent(`VM restarted: ${this._sourceFile}\n`));
             this.sendEvent(new StoppedEvent('restart', RiscvDebugSession.THREAD_ID));
@@ -1113,6 +1097,10 @@ export class RiscvDebugSession extends DebugSession {
 
   protected terminateRequest(response: DebugProtocol.TerminateResponse, args: DebugProtocol.TerminateArguments): void {
     if (this._vmHandler && this._vmHandler.isRunning()) {
+      clearPipelineDecorations();
+      closeGanttView();
+      closePipelineView();
+      ganttTracker.reset();
       this._vmHandler.vmExit();
       this.sendEvent(new OutputEvent('VM stopped\n'));
     }
@@ -1123,6 +1111,10 @@ export class RiscvDebugSession extends DebugSession {
 
   protected disconnectRequest(response: DebugProtocol.DisconnectResponse, args: DebugProtocol.DisconnectArguments): void {
     if (this._vmHandler && this._vmHandler.isRunning()) {
+      clearPipelineDecorations();
+      closeGanttView();
+      closePipelineView();
+      ganttTracker.reset();
       this._vmHandler.vmExit();
       this.sendEvent(new OutputEvent('VM stopped via disconnect\n'));
     }
@@ -1308,10 +1300,97 @@ export class RiscvDebugSession extends DebugSession {
 
       response.body = { success: true };
       this.sendResponse(response);
+    } else if (command === "showPipeline") {
+
+      if (!this._vmHandler || !this._vmHandler.isRunning()) {
+        response.success = false;
+        response.message = "VM handler not available or VM is not running";
+        this.sendResponse(response);
+        return;
+      }
+
+      const pipelineState = this._vmHandler.readPipelineRegistersJson();
+      const vmState = this._vmHandler.readStateJson();
+
+      if (pipelineState && vmState) {
+        showPipelineAsWebview(pipelineState, vmState);
+        response.success = true;
+      } else {
+        response.success = false;
+        response.message = "Pipeline data not available";
+      }
+
+      this.sendResponse(response);
+      return;
+
+    } else if (command === "showGantt") {
+      
+      if(!this._vmHandler || !this._vmHandler.isRunning()){
+        response.success = false;
+        response.message = "VM handler not available or VM is not running";
+        this.sendResponse(response);
+        return;
+      }
+
+      const history = ganttTracker.getHistory();
+      const cycles = ganttTracker.getCycleCount();
+
+      showGanttAsWebview(history, cycles);
+      response.success = true;      
+
+      this.sendResponse(response);
+      return;
+
     } else {
       super.customRequest(command, response, args, request);
     }
   }
 
+  private updateStatusBar(state: any): void {
+
+    if (getProgramCounterLabel()) {
+      getProgramCounterLabel()!.text = `PC: ${state.program_counter ?? 0}`;
+    }
+
+    if (getInstructionsExecutedLabel()) {
+      getInstructionsExecutedLabel()!.text = `Instr: ${state.instructions_retired ?? 0}`;
+    }
+
+    if (getPerformanceLabel()) {
+      const cycles = parseInt(state.cycle_count || '0');
+      const stalls = parseInt(state.stall_cycles || '0');
+      const instr = parseInt(state.instructions_retired || '0');
+
+      // Calculate CPI
+      const cpi = instr > 0 ? (cycles / instr).toFixed(2) : 'N/A';
+      getPerformanceLabel()!.text = `$(dashboard) Cycles: ${cycles} | Stalls: ${stalls} | CPI: ${cpi}`;
+    }
+
+  }
+
+  private updateEditorState(state: any): void {
+
+    this.updateStatusBar(state);
+  
+    this._currentLine = state.current_line || 0;
+    this._disassemblyLine = state.disassembly_line_number || state.disassembly_line || 0;
+    
+    disassemblyDoc.highlight(this._disassemblyLine);
+
+    const pipelineState = this._vmHandler?.readPipelineRegistersJson();
+    if (pipelineState) {
+      updatePipelineDecorations(pipelineState);
+      updatePipelineIfActive(pipelineState, state)
+      ganttTracker.update(pipelineState, state);
+      updateGanttIfActive(ganttTracker.getHistory(), ganttTracker.getCycleCount());
+    } else {
+      // single cycle mode –  remove any existing decorations
+      clearPipelineDecorations();
+      closeGanttView();
+      ganttTracker.reset();
+      closePipelineView();
+    }
+
+  }
 
 }
