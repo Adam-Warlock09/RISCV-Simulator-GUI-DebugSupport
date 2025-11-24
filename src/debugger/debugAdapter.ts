@@ -20,6 +20,9 @@ import { mapRegisterName } from '../utils';
 import { showPipelineAsWebview, updatePipelineIfActive, closePipelineView } from '../views/showPipeline';
 import { ganttTracker } from './ganttTracker';
 import { showGanttAsWebview, updateGanttIfActive, closeGanttView } from '../views/showGantt';
+import { metricsTracker, MetricsTracker } from './metricTracker';
+import { showPerformanceAsWebview, closePerformanceView, updatePerformanceIfActive } from '../views/showPerformance';
+import { close } from 'fs';
 
 interface LaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
   program: string;
@@ -1100,6 +1103,8 @@ export class RiscvDebugSession extends DebugSession {
       clearPipelineDecorations();
       closeGanttView();
       closePipelineView();
+      closePerformanceView();
+      metricsTracker.reset();
       ganttTracker.reset();
       this._vmHandler.vmExit();
       this.sendEvent(new OutputEvent('VM stopped\n'));
@@ -1114,6 +1119,8 @@ export class RiscvDebugSession extends DebugSession {
       clearPipelineDecorations();
       closeGanttView();
       closePipelineView();
+      closePerformanceView();
+      metricsTracker.reset();
       ganttTracker.reset();
       this._vmHandler.vmExit();
       this.sendEvent(new OutputEvent('VM stopped via disconnect\n'));
@@ -1341,7 +1348,22 @@ export class RiscvDebugSession extends DebugSession {
       this.sendResponse(response);
       return;
 
-    } else {
+    } else if(command === "showPerformance") {
+    
+      if (!this._vmHandler || !this._vmHandler.isRunning()) {
+        response.success = false;
+        response.message = "VM handler not available or VM is not running";
+        this.sendResponse(response);
+        return;
+      }
+      
+      const history = metricsTracker.getHistory();
+      showPerformanceAsWebview(history);
+      response.success = true;
+      this.sendResponse(response);
+      return;
+
+    }else {
       super.customRequest(command, response, args, request);
     }
   }
@@ -1382,12 +1404,16 @@ export class RiscvDebugSession extends DebugSession {
       updatePipelineDecorations(pipelineState);
       updatePipelineIfActive(pipelineState, state)
       ganttTracker.update(pipelineState, state);
+      metricsTracker.update(state);
+      updatePerformanceIfActive(metricsTracker.getHistory());
       updateGanttIfActive(ganttTracker.getHistory(), ganttTracker.getCycleCount());
     } else {
       // single cycle mode –  remove any existing decorations
       clearPipelineDecorations();
       closeGanttView();
       ganttTracker.reset();
+      metricsTracker.reset();
+      closePerformanceView();
       closePipelineView();
     }
 

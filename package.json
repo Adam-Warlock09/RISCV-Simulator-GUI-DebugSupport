@@ -40,6 +40,11 @@
           "command": "riscv-debug-support.showGantt",
           "group": "navigation",
           "when": "riscvDebugRunning"
+        },
+        {
+          "command": "riscv-debug-support.showPerformance",
+          "group": "navigation",
+          "when": "riscvDebugRunning"
         }
       ],
       "debug/toolBar": [
@@ -50,6 +55,11 @@
         },
         {
           "command": "riscv-debug-support.showGantt",
+          "group": "navigation",
+          "when": "riscvDebugRunning"
+        },
+        {
+          "command": "riscv-debug-support.showPerformance",
           "group": "navigation",
           "when": "riscvDebugRunning"
         }
@@ -75,6 +85,12 @@
         "title": "RISC-V: Show Gantt Chart",
         "category": "RISC-V",
         "icon": "$(list-tree)"
+      },
+      {
+        "command": "riscv-debug-support.showPerformance",
+        "title": "RISC-V: Show Performance Metrics",
+        "category": "RISC-V",
+        "icon": "$(graph-line)"
       }
     ],
     "viewsContainers": {},

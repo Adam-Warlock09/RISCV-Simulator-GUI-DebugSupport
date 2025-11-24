@@ -159,6 +159,15 @@ export function activate(context: vscode.ExtensionContext) {
     }
   }));
 
+  context.subscriptions.push(vscode.commands.registerCommand('riscv-debug-support.showPerformance', async () => {
+    const session = vscode.debug.activeDebugSession;
+    if (session && session.type === 'riscvSimpleDebug') {
+      await session.customRequest('showPerformance');
+    } else {
+      vscode.window.showErrorMessage("No active RISC-V debug session found.");
+    }
+  }));
+
   // Code completion provider for RISC-V assembly language
   context.subscriptions.push(completionProvider);
 
