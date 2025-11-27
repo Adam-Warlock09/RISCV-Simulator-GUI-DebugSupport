@@ -1077,6 +1077,7 @@ export class RiscvDebugSession extends DebugSession {
             disassemblyDoc.update(this._vmHandler?.readDisassembly() || '');
             // disassemblyDoc.highlight(this._disassemblyLine);
             ganttTracker.reset();
+            metricsTracker.reset();
             clearPipelineDecorations();
             this.updateEditorState(state);
             this.restoreBreakpoints();
